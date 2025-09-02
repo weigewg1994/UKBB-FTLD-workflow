@@ -9,6 +9,11 @@ library(readxl)
 library(readr)
 library(MatchIt)
 library(dplyr)
+library(broom)
+library(car)
+library(pROC)
+library(ResourceSelection)
+library(foreign)
 ```
 
 Import data
@@ -18,7 +23,6 @@ PSP_w_exposures <- read_csv("C:/Users/Charlie Zhao/OneDrive - Mass General Brigh
 PSP_assessment_centre <- read_csv("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/Data/PSP_assessment_centre.csv")
 Control_w_exposures <- read_csv("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/Data/Control_w_exposures.csv")
 Controls_age_and_sex <- read_csv("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/Data/Controls_age_and_sex.csv")
-
 ```
 
 Combine groups into PSP and healthy cohorts, then combine into single dataframe
@@ -69,5 +73,31 @@ Analysis
 
 ```
 
+Import GP records
+```{r}
+CTV_library <- read.dbf("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/nhs_readbrowser_25.0.0_20180401000001/Standard/V3/Term.dbf")
+CTV_tempance <- read.dbf("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/nhs_readbrowser_25.0.0_20180401000001/Standard/V3/TEMPANCE.dbf")
+CTV_ancestor <- read.dbf("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/nhs_readbrowser_25.0.0_20180401000001/Standard/V3/ANCESTOR.dbf")
+CTV_hier <- read.dbf("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/nhs_readbrowser_25.0.0_20180401000001/Standard/V3/HIER.dbf")
+CTV_temphier <- read.dbf("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/nhs_readbrowser_25.0.0_20180401000001/Standard/V3/TEMPHIER.dbf")
+CTV_concept <- read.dbf("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/nhs_readbrowser_25.0.0_20180401000001/Standard/V3/CONCEPT.dbf")
+CTV_term198 <- read.dbf("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/nhs_readbrowser_25.0.0_20180401000001/Standard/V3/TERM198.dbf")
+CTV_ICD10 <- read.dbf("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/nhs_readbrowser_25.0.0_20180401000001/Standard/V3/ICD10.dbf")
+CTV_Compkey <- read.dbf("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/nhs_readbrowser_25.0.0_20180401000001/Standard/V3/COMPKEY4.dbf")
+
+
+PSP_GPlevel <- read_csv("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/Data/PSP-w-GP-only_GPlevel.csv")
+
+```
+
+Join
+```{r}
+PSP_GPlevel <- PSP_GPlevel %>%
+  left_join(
+    CTV_library %>% select(TERMID, TERM30),
+    by = c("CTV3 (Read v3) code" = "TERMID")
+  ) %>%
+  rename(Term = TERM30)
+```
 
 
