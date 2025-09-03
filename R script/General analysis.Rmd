@@ -14,15 +14,20 @@ library(car)
 library(pROC)
 library(ResourceSelection)
 library(foreign)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
 ```
 
 Import data
 ```{r}
-Participant_table_with_related_disorders <- read_excel("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/Data/Participant_table with related disorders.xlsx")
-PSP_w_exposures <- read_csv("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/Data/PSP_w_exposures.csv")
-PSP_assessment_centre <- read_csv("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/Data/PSP_assessment_centre.csv")
-Control_w_exposures <- read_csv("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/Data/Control_w_exposures.csv")
-Controls_age_and_sex <- read_csv("C:/Users/Charlie Zhao/OneDrive - Mass General Brigham/Research/UK Biobank/Data/Controls_age_and_sex.csv")
+Participant_table_with_related_disorders <- read_excel("../../Data/Participant_table with related disorders.xlsx")
+PSP_w_exposures <- read_csv("../../Data/PSP_w_exposures.csv")
+PSP_assessment_centre <- read_csv("../../Data/PSP_assessment_centre.csv")
+Control_w_exposures <- read_csv("../../Data/Control_w_exposures.csv")
+Controls_age_and_sex <- read_csv("../../Data/Controls_age_and_sex.csv")
+PMH_and_meds <- read_csv("../../Data/Med history and meds self reported.csv")
+Metabolic_syndrome <- read_csv("../../Data/metabolic_syndrome_participant.csv")
 ```
 
 Combine groups into PSP and healthy cohorts, then combine into single dataframe
@@ -31,24 +36,28 @@ Combine groups into PSP and healthy cohorts, then combine into single dataframe
 Controls_all <- merge(Control_w_exposures,
                       Controls_age_and_sex,
                       by = "Participant ID")
+Controls_all <- merge(Controls_all,
+                      PMH_and_meds,
+                      by = "Participant ID")
 PSP_all <- merge(PSP_w_exposures,
                  Participant_table_with_related_disorders,
                  by = "Participant ID")
 PSP_all <- merge(PSP_all,
                  PSP_assessment_centre,
                  by = "Participant ID")
+PSP_all_w_pmh <- merge(PSP_all,
+                 PMH_and_meds,
+                 by = "Participant ID")
 if ("UK Biobank assessment centre | Instance 0.y" %in% names(PSP_all)) { #Fix name discrepancy
-  PSP_all <- PSP_all %>%
+  PSP_all <- PSP_all_w_pmh %>%
     rename(`UK Biobank assessment centre | Instance 0` =
              `UK Biobank assessment centre | Instance 0.y`)
 }
-```
 
-Combine into one dataframe
-```{r}
 psp  <- PSP_all %>% mutate(case = 1L)
 ctrl <- Controls_all %>% mutate(case = 0L)
 df <- bind_rows(psp,ctrl)
+df <- merge(df, Metabolic_syndrome, by = "Participant ID")
 ```
 
 Make matched control group, matched on age, sex, and assessment center, at 10:1 ratio
@@ -63,14 +72,330 @@ m <- matchit(
 
 summary(m)
 
-matched_ctrl <- match.data(m)
+matched_all <- match.data(m)
 ```
 
 
-Analysis
+Analysis - see if CVD is more common in PSP than controls (by self report)
 ```{r}
+cvd_table <- matched_all %>%
+  select(`Participant ID`, 
+         `case`,
+         cvd_var = `Vascular/heart problems diagnosed by doctor | Instance 0`) %>%
+  filter(cvd_var != "Prefer not to answer") %>%
+  mutate(has_cvd = if_else(cvd_var == "None of the above", 0L, 1L))
+
+cvd_summary <- cvd_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    n_with_cvd = sum(has_cvd),
+    percent_with_cvd = 100 * mean(has_cvd),
+    .groups = "drop"
+  )
+
+cvd_tab <- table(cvd_table$case, cvd_table$has_cvd)
+cvd_tab
+chisq.test(cvd_tab)
+
+```
+Analysis - see if self-reported HTN is more common in PSP than controls (run the CVD one above first)
+```{r}
+htn_table <- cvd_table %>%
+  mutate(has_htn = if_else(
+    str_detect(cvd_var, regex("High blood pressure", ignore_case = TRUE)), 1L, 0L))
+
+htn_summary <- htn_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    n_with_htn = sum(has_htn),
+    percent_with_htn = 100 * mean(has_htn),
+    .groups = "drop"
+  )
+
+htn_tab <- table(htn_table$case, htn_table$has_htn)
+htn_tab
+chisq.test(htn_tab)
+
+```
+Analysis - see if self-reported diabetes is more common in PSP than controls
+```{r}
+dm_table <- matched_all %>%
+  select(`Participant ID`, 
+         `case`,
+         dm_var = `Diabetes diagnosed by doctor | Instance 0`) %>%
+  filter(dm_var != "Prefer not to answer") %>%
+  filter(dm_var != "Do not know") %>%
+  mutate(has_dm = if_else(dm_var == "No", 0L, 1L))
+
+dm_summary <- dm_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    n_with_dm = sum(has_dm),
+    percent_with_dm = 100 * mean(has_dm),
+    .groups = "drop"
+  )
+
+dm_tab <- table(dm_table$case, dm_table$has_dm)
+dm_tab
+chisq.test(dm_tab)
+
+```
+Analysis - see if metabolic syndrome markers are different between PSP and controls
+```{r}
+metsyn_table <- matched_all %>%
+  select(
+    ID = `Participant ID`, 
+    case = `case`,
+    BMI = `Body mass index (BMI) | Instance 0`,
+    LDL = `LDL direct | Instance 0`,
+    LpA = `Lipoprotein A | Instance 0`,
+    A1c = `Glycated haemoglobin (HbA1c) | Instance 0`,
+    htn_date = `Date I10 first reported (essential (primary) hypertension)`,
+    iddm_date = `Date E10 first reported (insulin-dependent diabetes mellitus)`,
+    niddm_date = `Date E11 first reported (non-insulin-dependent diabetes mellitus)`,
+    osdm_date = `Date E13 first reported (other specified diabetes mellitus)`,
+    udm_date = `Date E14 first reported (unspecified diabetes mellitus)`
+  ) %>%
+  mutate(earliest_dm_date = pmin(iddm_date, niddm_date, osdm_date, udm_date, na.rm=TRUE)) %>%
+  mutate(any_htn = ifelse(is.na(htn_date), 0, 1)) %>%
+  mutate(any_dm = ifelse(is.na(earliest_dm_date), 0, 1))
+
+#Display descriptive data
+desc_table <- metsyn_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    
+    # BMI
+    BMI_mean   = mean(BMI, na.rm = TRUE),
+    BMI_sd     = sd(BMI, na.rm = TRUE),
+    BMI_median = median(BMI, na.rm = TRUE),
+    BMI_IQR    = IQR(BMI, na.rm = TRUE),
+    BMI_missing = sum(is.na(BMI)),
+    
+    # LDL
+    LDL_mean   = mean(LDL, na.rm = TRUE),
+    LDL_sd     = sd(LDL, na.rm = TRUE),
+    LDL_median = median(LDL, na.rm = TRUE),
+    LDL_IQR    = IQR(LDL, na.rm = TRUE),
+    LDL_missing = sum(is.na(LDL)),
+    
+    # LpA
+    LpA_mean   = mean(LpA, na.rm = TRUE),
+    LpA_sd     = sd(LpA, na.rm = TRUE),
+    LpA_median = median(LpA, na.rm = TRUE),
+    LpA_IQR    = IQR(LpA, na.rm = TRUE),
+    LpA_missing = sum(is.na(LpA)),
+    
+    # A1c
+    A1c_mean   = mean(A1c, na.rm = TRUE),
+    A1c_sd     = sd(A1c, na.rm = TRUE),
+    A1c_median = median(A1c, na.rm = TRUE),
+    A1c_IQR    = IQR(A1c, na.rm = TRUE),
+    A1c_missing = sum(is.na(A1c)),
+    
+    # Binary vars: percentage
+    any_htn_percent = 100 * mean(any_htn == 1, na.rm = TRUE),
+    any_dm_percent  = 100 * mean(any_dm == 1, na.rm = TRUE)
+  )
+
+print(desc_table)
+
+#Univariate analysis
+
+results_list <- list()
+
+# Continuous variables ----------------
+numeric_vars <- c("BMI", "LDL", "LpA", "A1c")
+
+for (var in numeric_vars) {
+  formula <- as.formula(paste(var, "~ case"))
+  
+  # Wilcoxon test (robust to non-normality)
+  test <- wilcox.test(formula, data = metsyn_table)
+  
+  results_list[[var]] <- tibble(
+    variable = var,
+    test_type = "Wilcoxon rank-sum",
+    statistic = unname(test$statistic),
+    p_value = test$p.value
+  )
+}
+
+# Binary variables --------------------
+binary_vars <- c("any_htn", "any_dm")
+
+for (var in binary_vars) {
+  tab <- table(metsyn_table$case, metsyn_table[[var]])
+  
+  if (any(tab < 5)) {
+    test <- fisher.test(tab)
+    method <- "Fisher's exact"
+  } else {
+    test <- chisq.test(tab)
+    method <- "Chi-square"
+  }
+  
+  results_list[[var]] <- tibble(
+    variable = var,
+    test_type = method,
+    statistic = ifelse(method == "Chi-square", unname(test$statistic), NA),
+    p_value = test$p.value
+  )
+}
+
+# Combine results
+univariate_results <- bind_rows(results_list)
+
+print(univariate_results)
+
+#Plot numerical results
+for (v in numeric_vars) {
+  p <- ggplot(metsyn_table, aes(x = factor(case), y = .data[[v]], fill = factor(case))) +
+    geom_violin(trim = FALSE, alpha = 0.6) +
+    geom_boxplot(width = 0.15, outlier.shape = NA, alpha = 0.7) +
+    labs(x = "Case status", y = v,
+         title = paste("Distribution of", v, "by case"),
+         fill = "Case") +
+    theme_minimal(base_size = 14)
+  
+  print(p)
+}
+```
+
+Analysis - number of diagnoses and meds
+```{r}
+numdx_table <- matched_all %>%
+  select(`Participant ID`, 
+         `case`,
+         numdx_var = `Number of self-reported non-cancer illnesses | Instance 0`,
+          nummeds_var = `Number of treatments/medications taken | Instance 0`)
+
+numdx_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    median_numdx = median(numdx_var, na.rm = TRUE),
+    IQR_numdx = IQR(numdx_var, na.rm = TRUE),
+    mean_numdx = mean(numdx_var, na.rm = TRUE),  # just for context
+    sd_numdx = sd(numdx_var, na.rm = TRUE)
+  )
+
+numdx_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    median_nummeds = median(nummeds_var, na.rm = TRUE),
+    IQR_nummeds = IQR(nummeds_var, na.rm = TRUE),
+    mean_nummeds = mean(nummeds_var, na.rm = TRUE),  # just for context
+    sd_nummeds = sd(nummeds_var, na.rm = TRUE)
+  )
+
+wilcox.test(numdx_var ~ case, data = numdx_table)
+wilcox.test(nummeds_var ~ case, data = numdx_table)
+```
+
+Analysis - education level (12 years as cutoff for higher education)
+```{r}
+edu_table <- matched_all %>%
+  select(`Participant ID`, 
+         `case`,
+          edu_var = `Qualifications | Instance 0`) %>%
+          mutate(
+            high_edu = case_when(
+              str_detect(edu_var, "College or University degree") ~ 1L,
+              str_detect(edu_var, "A levels/AS levels or equivalent") ~ 1L,
+              str_detect(edu_var, "NVQ or HND or HNC or equivalent") ~ 1L,
+              str_detect(edu_var, "Other professional qualifications") ~ 1L,
+              str_detect(edu_var, "None of the above") ~ 0L,
+              str_detect(edu_var, "Prefer not to answer") ~ NA_integer_,
+              TRUE ~ 0L
+            )
+          ) %>%
+    filter(!is.na(high_edu))
+
+# Summarize counts and percentages
+edu_summary <- edu_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    n_high = sum(high_edu == 1),
+    percent_high = 100 * mean(high_edu == 1),
+    .groups = "drop"
+  )
+
+print(edu_summary)
+
+# 2x2 contingency table
+edu_tab <- table(edu_table$case, edu_table$high_edu)
+edu_tab
+
+# Chi-square test (works if expected counts >= 5)
+chisq.test(edu_tab)
+```
+
+Analysis - smoking (based on pack-years only)
+```{r}
+smoking_table <- matched_all %>%
+  select(`Participant ID`, 
+         `case`,
+         packyrs_var = `Pack years of smoking | Instance 0`) %>%
+  mutate(packyrs_var = replace_na(packyrs_var, 0)) %>%
+  mutate(never_smoker = if_else(packyrs_var == 0, 1L, 0L))
+
+smoking_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    median_packyrs = median(packyrs_var, na.rm = TRUE),
+    IQR_packyrs = IQR(packyrs_var, na.rm = TRUE),
+    mean_packyrs = mean(packyrs_var, na.rm = TRUE),  # just for context
+    sd_packyrs = sd(packyrs_var, na.rm = TRUE)
+  )
+
+# Summarize percentages by case status
+smoking_summary <- smoking_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    n_never = sum(never_smoker),
+    percent_never = 100 * mean(never_smoker),
+    .groups = "drop"
+  )
+
+print(smoking_summary)
+
+# 2x2 contingency table
+smoking_tab <- table(smoking_table$case, smoking_table$never_smoker)
+smoking_tab
+
+# Statistical test
+wilcox.test(packyrs_var ~ case, data = smoking_table)
+chisq.test(smoking_tab)
+```
+Analysis - air pollution
+```{r}
+pollution_table <- matched_all %>%
+  select(`Participant ID`, 
+         `case`,
+         pollution_var = `Particulate matter air pollution (pm10); 2007`)
+
+pollution_table %>%
+  group_by(case) %>%
+  summarise(
+    n = n(),
+    median_pollution = median(pollution_var, na.rm = TRUE),
+    IQR_pollution = IQR(pollution_var, na.rm = TRUE),
+    mean_pollution = mean(pollution_var, na.rm = TRUE),  # just for context
+    sd_pollution = sd(pollution_var, na.rm = TRUE)
+  )
 
 
+wilcox.test(pollution_var ~ case, data = pollution_table)
+t.test(pollution_var ~ case, data = pollution_table)
 ```
 
 Import GP records
