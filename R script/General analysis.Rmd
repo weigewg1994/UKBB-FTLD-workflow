@@ -54,7 +54,8 @@ if ("UK Biobank assessment centre | Instance 0.y" %in% names(PSP_all)) { #Fix na
              `UK Biobank assessment centre | Instance 0.y`)
 }
 
-psp  <- PSP_all %>% mutate(case = 1L)
+psp  <- PSP_all %>% mutate(case = 1L) %>%
+  filter(`Years from recruitment to first report of PSP` >= 0)
 ctrl <- Controls_all %>% mutate(case = 0L)
 df <- bind_rows(psp,ctrl)
 df <- merge(df, Metabolic_syndrome, by = "Participant ID")
